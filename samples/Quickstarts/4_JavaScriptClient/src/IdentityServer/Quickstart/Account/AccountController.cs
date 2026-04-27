@@ -90,15 +90,7 @@ namespace IdentityServerHost.Quickstart.UI
                     // this will send back an access denied OIDC error response to the client.
                     await _interaction.DenyAuthorizationAsync(context, AuthorizationError.AccessDenied);
 
-                    // we can trust model.ReturnUrl since GetAuthorizationContextAsync returned non-null
-                    if (context.IsNativeClient())
-                    {
-                        // The client is native, so this change in how to
-                        // return the response is for better UX for the end user.
-                        return this.LoadingPage("Redirect", model.ReturnUrl);
-                    }
-
-                    return Redirect(model.ReturnUrl);
+                    return this.RedirectToSafeReturnUrl(_interaction, model.ReturnUrl, context.IsNativeClient());
                 }
                 else
                 {
@@ -137,26 +129,19 @@ namespace IdentityServerHost.Quickstart.UI
 
                     if (context != null)
                     {
-                        if (context.IsNativeClient())
-                        {
-                            // The client is native, so this change in how to
-                            // return the response is for better UX for the end user.
-                            return this.LoadingPage("Redirect", model.ReturnUrl);
-                        }
-
-                        // we can trust model.ReturnUrl since GetAuthorizationContextAsync returned non-null
-                        return Redirect(model.ReturnUrl);
+                        return this.RedirectToSafeReturnUrl(_interaction, model.ReturnUrl, context.IsNativeClient());
                     }
 
-                    // request for a local page
-                    if (Url.IsLocalUrl(model.ReturnUrl))
-                    {
-                        return Redirect(model.ReturnUrl);
-                    }
-                    else if (string.IsNullOrEmpty(model.ReturnUrl))
+                    if (string.IsNullOrEmpty(model.ReturnUrl))
                     {
                         return Redirect("~/");
                     }
+
+                    if (this.IsValidReturnUrl(_interaction, model.ReturnUrl))
+                    {
+                        return this.RedirectToSafeReturnUrl(_interaction, model.ReturnUrl);
+                    }
+
                     else
                     {
                         // user might have clicked on a malicious link - should be logged

@@ -67,8 +67,45 @@ namespace IdentityServer4.Services
                     returnUrl = returnUrl.Substring(0, index);
                 }
 
-                if (returnUrl.EndsWith(Constants.ProtocolRoutePaths.Authorize, StringComparison.Ordinal) ||
-                    returnUrl.EndsWith(Constants.ProtocolRoutePaths.AuthorizeCallback, StringComparison.Ordinal))
+                if (returnUrl.IndexOf('#') >= 0)
+                {
+                    _logger.LogTrace("returnUrl contains fragment and is not valid");
+                    return false;
+                }
+
+                string unescapedPath;
+                try
+                {
+                    unescapedPath = Uri.UnescapeDataString(returnUrl);
+                }
+                catch
+                {
+                    _logger.LogTrace("returnUrl contains invalid escape sequences");
+                    return false;
+                }
+
+                if (unescapedPath.IndexOf('\\') >= 0)
+                {
+                    _logger.LogTrace("returnUrl contains backslashes and is not valid");
+                    return false;
+                }
+
+                if (unescapedPath.StartsWith("//", StringComparison.Ordinal) ||
+                    unescapedPath.StartsWith("/\\", StringComparison.Ordinal) ||
+                    unescapedPath.StartsWith("~//", StringComparison.Ordinal) ||
+                    unescapedPath.StartsWith("~/\\", StringComparison.Ordinal))
+                {
+                    _logger.LogTrace("returnUrl starts with an invalid path prefix");
+                    return false;
+                }
+
+                if (unescapedPath.StartsWith("~/", StringComparison.Ordinal))
+                {
+                    unescapedPath = unescapedPath.Substring(1);
+                }
+
+                if (unescapedPath.EndsWith("/" + Constants.ProtocolRoutePaths.Authorize, StringComparison.Ordinal) ||
+                    unescapedPath.EndsWith("/" + Constants.ProtocolRoutePaths.AuthorizeCallback, StringComparison.Ordinal))
                 {
                     _logger.LogTrace("returnUrl is valid");
                     return true;

@@ -1,5 +1,6 @@
 using System;
 using IdentityServer4.Models;
+using IdentityServer4.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace IdentityServerHost.Quickstart.UI
@@ -22,6 +23,31 @@ namespace IdentityServerHost.Quickstart.UI
             controller.HttpContext.Response.Headers["Location"] = "";
             
             return controller.View(viewName, new RedirectViewModel { RedirectUrl = redirectUri });
+        }
+
+        public static bool IsValidReturnUrl(this Controller controller, IIdentityServerInteractionService interaction, string returnUrl)
+        {
+            if (string.IsNullOrWhiteSpace(returnUrl))
+            {
+                return false;
+            }
+
+            return controller.Url.IsLocalUrl(returnUrl) || interaction.IsValidReturnUrl(returnUrl);
+        }
+
+        public static IActionResult RedirectToSafeReturnUrl(this Controller controller, IIdentityServerInteractionService interaction, string returnUrl, bool useLoadingPageForNativeClient = false)
+        {
+            if (!controller.IsValidReturnUrl(interaction, returnUrl))
+            {
+                return controller.Redirect("~/");
+            }
+
+            if (useLoadingPageForNativeClient)
+            {
+                return controller.LoadingPage("Redirect", returnUrl);
+            }
+
+            return controller.Redirect(returnUrl);
         }
     }
 }
