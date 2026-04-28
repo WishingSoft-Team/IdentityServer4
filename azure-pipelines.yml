@@ -1,0 +1,221 @@
+trigger:
+  branches:
+    include:
+      - master
+      - release/*
+  tags:
+    include:
+      - '*.*.*'
+
+pr: none
+
+variables:
+  buildConfiguration: 'Release'
+  # 預設版本號，若有 git tag 則自動覆蓋 (格式: 4.x.x-preview.1 或 4.x.x)
+  packageVersion: $[coalesce(variables['Build.SourceBranchName'], '0.0.1')]
+
+parameters:
+  - name: packageVersion
+    displayName: 'NuGet Package Version (e.g. 4.1.2 or 4.1.2-preview.1)'
+    type: string
+    default: ''
+  - name: artifeedName
+    displayName: 'Azure Artifacts Feed Name'
+    type: string
+    default: 'IdentityServer4-Internal'
+
+stages:
+  - stage: Build
+    displayName: 'Build & Pack NuGet Packages'
+    jobs:
+      - job: BuildAndPack
+        displayName: 'Build, Test and Pack'
+        pool:
+          vmImage: 'windows-latest'
+        variables:
+          # 若手動輸入版本則使用手動輸入，否則從 git tag 取得
+          resolvedVersion: ${{ coalesce(parameters.packageVersion, '$(Build.SourceBranchName)') }}
+        steps:
+          - checkout: self
+            fetchDepth: 0  # 需要完整歷史以讀取 git tag
+
+          - task: UseDotNet@2
+            displayName: 'Use .NET SDK'
+            inputs:
+              useGlobalJson: false
+              version: '8.x'
+
+          - task: PowerShell@2
+            displayName: 'Resolve Package Version from git tag or parameter'
+            inputs:
+              targetType: inline
+              script: |
+                $inputVersion = "${{ parameters.packageVersion }}"
+                if ($inputVersion -ne '') {
+                  $version = $inputVersion
+                  Write-Host "Using manually provided version: $version"
+                } else {
+                  # 嘗試從最新的 git tag 取得版本號 (格式 x.x.x 或 x.x.x-suffix)
+                  $tag = git describe --tags --abbrev=0 2>$null
+                  if ($LASTEXITCODE -eq 0 -and $tag -match '^\d+\.\d+\.\d+') {
+                    $version = $tag
+                    Write-Host "Using version from git tag: $version"
+                  } else {
+                    # fallback: 使用 BuildId 作為 prerelease 版本
+                    $version = "4.0.0-build.$(Build.BuildId)"
+                    Write-Host "No git tag found, using fallback version: $version"
+                  }
+                }
+                Write-Host "##vso[task.setvariable variable=PACKAGE_VERSION]$version"
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore NuGet packages'
+            inputs:
+              command: restore
+              projects: 'src/**/*.csproj'
+              feedsToUse: 'select'
+              vstsFeed: '${{ parameters.artifeedName }}'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build IdentityServer4.Storage'
+            inputs:
+              command: build
+              projects: 'src/Storage/src/IdentityServer4.Storage.csproj'
+              arguments: '-c $(buildConfiguration) /p:Version=$(PACKAGE_VERSION) --nologo'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build IdentityServer4'
+            inputs:
+              command: build
+              projects: 'src/IdentityServer4/src/IdentityServer4.csproj'
+              arguments: '-c $(buildConfiguration) /p:Version=$(PACKAGE_VERSION) --nologo'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build IdentityServer4.EntityFramework.Storage'
+            inputs:
+              command: build
+              projects: 'src/EntityFramework.Storage/src/IdentityServer4.EntityFramework.Storage.csproj'
+              arguments: '-c $(buildConfiguration) /p:Version=$(PACKAGE_VERSION) --nologo'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build IdentityServer4.EntityFramework'
+            inputs:
+              command: build
+              projects: 'src/EntityFramework/src/IdentityServer4.EntityFramework.csproj'
+              arguments: '-c $(buildConfiguration) /p:Version=$(PACKAGE_VERSION) --nologo'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build IdentityServer4.AspNetIdentity'
+            inputs:
+              command: build
+              projects: 'src/AspNetIdentity/src/IdentityServer4.AspNetIdentity.csproj'
+              arguments: '-c $(buildConfiguration) /p:Version=$(PACKAGE_VERSION) --nologo'
+
+          # ── 執行單元測試 ────────────────────────────────────────────────────
+          - task: DotNetCoreCLI@2
+            displayName: 'Run Unit Tests'
+            inputs:
+              command: test
+              projects: |
+                src/IdentityServer4/test/IdentityServer.UnitTests/IdentityServer.UnitTests.csproj
+                src/EntityFramework.Storage/test/UnitTests/IdentityServer4.EntityFramework.UnitTests.csproj
+              arguments: '-c $(buildConfiguration) --no-build --nologo'
+
+          # ── Pack NuGet 套件 ─────────────────────────────────────────────────
+          - task: DotNetCoreCLI@2
+            displayName: 'Pack IdentityServer4.Storage'
+            inputs:
+              command: pack
+              packagesToPack: 'src/Storage/src/IdentityServer4.Storage.csproj'
+              nobuild: true
+              versioningScheme: byEnvVar
+              versionEnvVar: PACKAGE_VERSION
+              outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Pack IdentityServer4'
+            inputs:
+              command: pack
+              packagesToPack: 'src/IdentityServer4/src/IdentityServer4.csproj'
+              nobuild: true
+              versioningScheme: byEnvVar
+              versionEnvVar: PACKAGE_VERSION
+              outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Pack IdentityServer4.EntityFramework.Storage'
+            inputs:
+              command: pack
+              packagesToPack: 'src/EntityFramework.Storage/src/IdentityServer4.EntityFramework.Storage.csproj'
+              nobuild: true
+              versioningScheme: byEnvVar
+              versionEnvVar: PACKAGE_VERSION
+              outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Pack IdentityServer4.EntityFramework'
+            inputs:
+              command: pack
+              packagesToPack: 'src/EntityFramework/src/IdentityServer4.EntityFramework.csproj'
+              nobuild: true
+              versioningScheme: byEnvVar
+              versionEnvVar: PACKAGE_VERSION
+              outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Pack IdentityServer4.AspNetIdentity'
+            inputs:
+              command: pack
+              packagesToPack: 'src/AspNetIdentity/src/IdentityServer4.AspNetIdentity.csproj'
+              nobuild: true
+              versioningScheme: byEnvVar
+              versionEnvVar: PACKAGE_VERSION
+              outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
+
+          # ── 列出產生的套件 (方便 debug) ─────────────────────────────────────
+          - task: PowerShell@2
+            displayName: 'List generated packages'
+            inputs:
+              targetType: inline
+              script: |
+                Write-Host "=== Generated NuGet packages ==="
+                Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)/nuget" -Filter "*.nupkg" |
+                  ForEach-Object { Write-Host "  $($_.Name)" }
+
+          # ── 發布 build artifact (供下一個 stage 使用) ───────────────────────
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish NuGet artifact'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)/nuget'
+              ArtifactName: 'nuget-packages'
+
+  # ────────────────────────────────────────────────────────────────────────────
+  - stage: Publish
+    displayName: 'Publish to Azure Artifacts'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: PublishNuGet
+        displayName: 'Push packages to Azure Artifacts Feed'
+        pool:
+          vmImage: 'windows-latest'
+        # 若要加上手動核准，可在 Azure DevOps 環境設定 Approvals
+        environment: 'nuget-publish'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: nuget-packages
+
+                - task: NuGetAuthenticate@1
+                  displayName: 'Authenticate to Azure Artifacts'
+
+                - task: NuGetCommand@2
+                  displayName: 'Push packages to Azure Artifacts'
+                  inputs:
+                    command: push
+                    packagesToPush: '$(Pipeline.Workspace)/nuget-packages/*.nupkg'
+                    nuGetFeedType: internal
+                    publishVstsFeed: '${{ parameters.artifeedName }}'
+                    allowPackageConflicts: false  # 若版本已存在則報錯，避免意外覆蓋
