@@ -22,7 +22,7 @@ parameters:
   - name: artifeedName
     displayName: 'Azure Artifacts Feed Name'
     type: string
-    default: 'IdentityServer4-Internal'
+    default: 'WishingSoft.Base'
 
 stages:
   - stage: Build
